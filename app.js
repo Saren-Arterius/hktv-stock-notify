@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 var config = require('./config.json');
 var winston = require('winston');
 var nodemailer = require('nodemailer');
@@ -74,56 +73,60 @@ var sendEmail = function (result) {
   });
 };
 
+var extractStockInfoFromItem = function (stockItem, callback) {
+  Log.debug('Requesting ({0}): '.format(stockItem.id) + stockItem.productUrl);
+  rp(makeRequestOptions(stockItem)).then(function ($) {
+    Log.debug('Got page body: ' + stockItem.id);
+    var inStock = $('.disabled.large').length === 0;
+    callback(null, {
+      id: stockItem.id,
+      name: stockItem.itemName,
+      url: stockItem.productUrl,
+      inStock: inStock,
+      date: new Date()
+    });
+  }).catch(function (err) {
+    callback(err);
+  });
+};
+
+var upsertStockInfo = function (result, callback) {
+  InStockRecord.findOne({
+    where: {
+      StockItemId: result.id
+    },
+    order: [
+      ['id', 'DESC']
+    ]
+  }).then(function (lastRecord) {
+    if (!lastRecord || lastRecord.inStock !== result.inStock) {
+      return InStockRecord.create({
+        StockItemId: result.id,
+        inStock: result.inStock
+      });
+    }
+    callback(null, true);
+  }).then(function (createdRecord) {
+    if (!createdRecord) return;
+    if (result.inStock) {
+      sendEmail(result);
+    }
+    callback(null, true);
+  }).catch(callback);
+};
+
+var pauseIfDone = function (err, done) {
+  if (err) Log.error(err);
+  Log.debug('Done! Will call main again {0} minutes later'.format(config.run_interval_minutes));
+  setTimeout(main, config.run_interval_minutes * 60 * 1000);
+};
+
 var main = function () {
   Log.debug('Called main');
   StockItem.findAll().then(function (stockItems) {
-    Async.map(stockItems, function (stockItem, callback) {
-      Log.debug('Requesting ({0}): '.format(stockItem.id) + stockItem.productUrl);
-      rp(makeRequestOptions(stockItem)).then(function ($) {
-        Log.debug('Got page body: ' + stockItem.id);
-        var inStock = $('.disabled.large').length === 0;
-        callback(null, {
-          id: stockItem.id,
-          name: stockItem.itemName,
-          url: stockItem.productUrl,
-          inStock: inStock,
-          date: new Date()
-        });
-      }).catch(function (err) {
-        callback(err);
-      });
-    }, function (err, results) {
+    Async.map(stockItems, extractStockInfoFromItem, function (err, results) {
       if (err) Log.error(err);
-      Async.map(results, function (result, callback) {
-        InStockRecord.findOne({
-          where: {
-            StockItemId: result.id
-          },
-          order: [
-            ['id', 'DESC']
-          ]
-        }).then(function (lastRecord) {
-          if (!lastRecord || lastRecord.inStock !== result.inStock) {
-            return InStockRecord.create({
-              StockItemId: result.id,
-              inStock: result.inStock
-            });
-          }
-          callback(null, true);
-        }).then(function (createdRecord) {
-          if (!createdRecord) return;
-          if (result.inStock) {
-            sendEmail(result);
-          }
-          callback(null, true);
-        }).catch(function (err) {
-          callback(err);
-        });
-      }, function (err, done) {
-        if (err) Log.error(err);
-        Log.debug('Done! Will call main again {0} minutes later'.format(config.run_interval_minutes));
-        setTimeout(main, config.run_interval_minutes * 60 * 1000);
-      });
+      Async.map(results, upsertStockInfo, pauseIfDone);
     });
   });
 };
