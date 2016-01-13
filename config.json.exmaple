@@ -1,0 +1,7 @@
+{
+  "run_interval_minutes": 5,
+  "sqlite_filename": "database.sqlite",
+  "smtp_url": "smtp://192.168.0.1",
+  "from_email": "hktv-stock-notify@domain.tld",
+  "to_email": "your@email.tld"
+}
