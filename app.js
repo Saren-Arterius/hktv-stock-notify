@@ -91,6 +91,9 @@ var extractStockInfoFromItem = function (stockItem, callback) {
 };
 
 var upsertStockInfo = function (result, callback) {
+  if (!result) {
+    return callback(null, true);
+  }
   InStockRecord.findOne({
     where: {
       StockItemId: result.id
